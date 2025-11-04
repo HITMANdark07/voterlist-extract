@@ -54,3 +54,72 @@ def perform_ocr_from_file(image_path: str) -> str:
         logger.error(f"Error opening image {image_path}: {e}")
         return ""
 
+
+def ocr_serial_number(region: Image.Image) -> str:
+    """
+    Perform OCR on serial number region (small box, single line).
+    Uses PSM 7 (single text line) for better accuracy.
+    
+    Args:
+        region: PIL Image object of serial number region
+        
+    Returns:
+        Extracted serial number text
+    """
+    try:
+        text = pytesseract.image_to_string(
+            region,
+            lang=OCR_LANGUAGE,
+            config='--psm 7'  # Single text line
+        )
+        return text.strip()
+    except Exception as e:
+        logger.error(f"OCR error on serial number: {e}")
+        return ""
+
+
+def ocr_epic_number(region: Image.Image) -> str:
+    """
+    Perform OCR on EPIC number region (top-right, alphanumeric).
+    Uses PSM 7 (single text line) for better accuracy.
+    
+    Args:
+        region: PIL Image object of EPIC number region
+        
+    Returns:
+        Extracted EPIC number text
+    """
+    try:
+        text = pytesseract.image_to_string(
+            region,
+            lang=OCR_LANGUAGE,
+            config='--psm 7'  # Single text line
+        )
+        return text.strip()
+    except Exception as e:
+        logger.error(f"OCR error on EPIC number: {e}")
+        return ""
+
+
+def ocr_details(region: Image.Image) -> str:
+    """
+    Perform OCR on details region (voter information block).
+    Uses PSM 6 (uniform block of text) for better accuracy.
+    
+    Args:
+        region: PIL Image object of details region
+        
+    Returns:
+        Extracted details text
+    """
+    try:
+        text = pytesseract.image_to_string(
+            region,
+            lang=OCR_LANGUAGE,
+            config='--psm 6'  # Uniform block of text
+        )
+        return text
+    except Exception as e:
+        logger.error(f"OCR error on details: {e}")
+        return ""
+

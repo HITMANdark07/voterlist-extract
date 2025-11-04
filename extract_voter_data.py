@@ -13,9 +13,10 @@ from PIL import Image
 # Import modules
 from config import INPUT_DIR, OUTPUT_DIR, TEMP_DIR, USE_MULTIPROCESSING, MAX_WORKERS
 from pdf_converter import pdf_to_images
-from ocr_processor import perform_ocr
-from text_parser import parse_single_block
+from ocr_processor import ocr_serial_number, ocr_epic_number, ocr_details
+from text_parser import parse_from_regions
 from grid_detector import detect_voter_blocks
+from block_splitter import split_voter_block
 from data_saver import save_voters_to_csv
 
 # Setup logging
@@ -59,24 +60,29 @@ def extract_voter_data_from_image(image: Image.Image, page_num: int) -> List[Dic
     
     logger.info(f"Page {page_num}: Detected {len(voter_blocks)} voter blocks")
     
-    # Step 2: OCR each block separately
+    # Step 2: Split blocks into regions and OCR each region separately
     voters = []
     for block_idx, block_image in enumerate(voter_blocks):
         try:
-            # Perform OCR on individual block
-            ocr_text = perform_ocr(block_image)
+            # Split block into regions
+            regions = split_voter_block(block_image)
             
-            if not ocr_text.strip():
-                logger.debug(f"Page {page_num}, Block {block_idx + 1}: No text extracted")
+            # Perform OCR on each region with appropriate PSM mode
+            serial_text = ocr_serial_number(regions['serial_no'])
+            epic_text = ocr_epic_number(regions['epic'])
+            details_text = ocr_details(regions['details'])
+            
+            if not epic_text.strip() and not details_text.strip():
+                logger.debug(f"Page {page_num}, Block {block_idx + 1}: No text extracted from regions")
                 continue
             
-            # Parse voter data from block
-            voter_data = parse_single_block(ocr_text)
+            # Parse voter data from regions
+            voter_data = parse_from_regions(serial_text, epic_text, details_text)
             
             if voter_data:
                 voters.append(voter_data)
             else:
-                logger.debug(f"Page {page_num}, Block {block_idx + 1}: Could not parse voter data")
+                logger.debug(f"Page {page_num}, Block {block_idx + 1}: Could not parse voter data from regions")
                 
         except Exception as e:
             logger.debug(f"Error processing block {block_idx + 1} on page {page_num}: {e}")

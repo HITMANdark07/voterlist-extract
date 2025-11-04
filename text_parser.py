@@ -29,6 +29,71 @@ def extract_number(text: str) -> Optional[int]:
     return int(match.group()) if match else None
 
 
+def parse_from_regions(serial_text: str, epic_text: str, details_text: str) -> Optional[Dict[str, any]]:
+    """
+    Parse voter information from separate OCR regions.
+    
+    Args:
+        serial_text: OCR text from serial number region
+        epic_text: OCR text from EPIC number region
+        details_text: OCR text from details region
+        
+    Returns:
+        Dictionary with voter information or None
+    """
+    try:
+        voter = {
+            'serial_no': None,
+            'epic_no': '',
+            'name': '',
+            'relation_type': '',
+            'relation_name': '',
+            'house_no': '',
+            'age': None,
+            'gender': ''
+        }
+        
+        # Extract serial number from serial_text
+        serial_no = extract_number(serial_text)
+        if serial_no:
+            voter['serial_no'] = serial_no
+        
+        # Extract EPIC number from epic_text
+        epic_pattern = r'\b([A-Z]{2,3}[A-Z0-9]{7,10})\b'
+        epic_match = re.search(epic_pattern, epic_text)
+        if epic_match:
+            voter['epic_no'] = epic_match.group(1)
+        else:
+            logger.debug("No EPIC number found in EPIC region")
+            return None
+        
+        # Parse details from details_text
+        details = extract_voter_info(details_text, voter['epic_no'])
+        
+        if details:
+            # Merge details with serial and EPIC
+            voter['name'] = details.get('name', '')
+            voter['relation_type'] = details.get('relation_type', '')
+            voter['relation_name'] = details.get('relation_name', '')
+            voter['house_no'] = details.get('house_no', '')
+            voter['age'] = details.get('age')
+            voter['gender'] = details.get('gender', '')
+            
+            # Use serial_no from serial_text if available, otherwise from details
+            if voter['serial_no'] is None:
+                voter['serial_no'] = details.get('serial_no')
+        
+        # Only return if we have at least EPIC and name
+        if voter['epic_no'] and voter['name']:
+            return voter
+        
+        return None
+        
+    except Exception as e:
+        logger.debug(f"Error parsing from regions: {e}")
+        return None
+
+
 def parse_single_block(ocr_text: str) -> Optional[Dict[str, any]]:
     """
     Parse a single voter block (for use with grid-detected blocks).
