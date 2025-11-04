@@ -29,12 +29,40 @@ def extract_number(text: str) -> Optional[int]:
     return int(match.group()) if match else None
 
 
+def parse_single_block(ocr_text: str) -> Optional[Dict[str, any]]:
+    """
+    Parse a single voter block (for use with grid-detected blocks).
+    
+    Args:
+        ocr_text: OCR text from a single voter block
+        
+    Returns:
+        Dictionary with voter information or None
+    """
+    if not ocr_text or not ocr_text.strip():
+        return None
+    
+    # Find EPIC number in the block
+    epic_pattern = r'\b([A-Z]{2,3}[A-Z0-9]{7,10})\b'
+    epic_match = re.search(epic_pattern, ocr_text)
+    
+    if not epic_match:
+        logger.debug("No EPIC number found in block")
+        return None
+    
+    epic_no = epic_match.group(1)
+    
+    # Parse voter info from the entire block text
+    return extract_voter_info(ocr_text, epic_no)
+
+
 def extract_voter_blocks(ocr_text: str) -> List[Dict[str, any]]:
     """
     Extract structured voter data from OCR text using regex patterns.
+    This is the legacy method for full-page OCR.
     
     Args:
-        ocr_text: Raw OCR text output
+        ocr_text: Raw OCR text output from full page
         
     Returns:
         List of dictionaries containing voter information

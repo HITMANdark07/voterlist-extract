@@ -14,7 +14,8 @@ from PIL import Image
 from config import INPUT_DIR, OUTPUT_DIR, TEMP_DIR, USE_MULTIPROCESSING, MAX_WORKERS
 from pdf_converter import pdf_to_images
 from ocr_processor import perform_ocr
-from text_parser import extract_voter_blocks
+from text_parser import parse_single_block
+from grid_detector import detect_voter_blocks
 from data_saver import save_voters_to_csv
 
 # Setup logging
@@ -38,7 +39,7 @@ def setup_directories():
 
 def extract_voter_data_from_image(image: Image.Image, page_num: int) -> List[Dict[str, any]]:
     """
-    Extract voter data from a single image.
+    Extract voter data from a single image using grid detection.
     
     Args:
         image: PIL Image object
@@ -49,17 +50,39 @@ def extract_voter_data_from_image(image: Image.Image, page_num: int) -> List[Dic
     """
     logger.info(f"Processing page {page_num}...")
     
-    # Perform OCR
-    ocr_text = perform_ocr(image)
+    # Step 1: Detect grid and extract individual voter blocks
+    voter_blocks = detect_voter_blocks(image)
     
-    if not ocr_text.strip():
-        logger.warning(f"No text extracted from page {page_num}")
+    if not voter_blocks:
+        logger.warning(f"No voter blocks detected on page {page_num}")
         return []
     
-    # Extract voter blocks
-    voters = extract_voter_blocks(ocr_text)
+    logger.info(f"Page {page_num}: Detected {len(voter_blocks)} voter blocks")
     
-    logger.info(f"Page {page_num}: Found {len(voters)} voters")
+    # Step 2: OCR each block separately
+    voters = []
+    for block_idx, block_image in enumerate(voter_blocks):
+        try:
+            # Perform OCR on individual block
+            ocr_text = perform_ocr(block_image)
+            
+            if not ocr_text.strip():
+                logger.debug(f"Page {page_num}, Block {block_idx + 1}: No text extracted")
+                continue
+            
+            # Parse voter data from block
+            voter_data = parse_single_block(ocr_text)
+            
+            if voter_data:
+                voters.append(voter_data)
+            else:
+                logger.debug(f"Page {page_num}, Block {block_idx + 1}: Could not parse voter data")
+                
+        except Exception as e:
+            logger.debug(f"Error processing block {block_idx + 1} on page {page_num}: {e}")
+            continue
+    
+    logger.info(f"Page {page_num}: Extracted {len(voters)} voters from {len(voter_blocks)} blocks")
     return voters
 
 

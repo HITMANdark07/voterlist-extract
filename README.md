@@ -21,7 +21,7 @@ sudo apt-get install tesseract-ocr tesseract-ocr-hin tesseract-ocr-eng poppler-u
 ```bash
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+pip install pdf2image pytesseract Pillow pandas python-dateutil opencv-python numpy
 ```
 
 ### 3. Verify Installation
@@ -49,6 +49,7 @@ ls output_csv/
 ocr-poc/
 ├── config.py              # Configuration settings
 ├── pdf_converter.py        # PDF → Image conversion
+├── grid_detector.py        # Grid detection & block extraction
 ├── ocr_processor.py        # Image → Text (OCR)
 ├── text_parser.py          # Text → Structured data
 ├── data_saver.py          # Data → CSV/Excel
@@ -81,7 +82,8 @@ CSV columns: `serial_no`, `epic_no`, `name`, `relation_type`, `relation_name`, `
 
 - **Tesseract not found**: Install Tesseract with Hindi language pack
 - **No text extracted**: Increase `IMAGE_DPI` in `config.py` or check PDF quality
-- **Missing dependencies**: Run `pip install -r requirements.txt`
+- **Missing dependencies**: Install all packages: `pip install pdf2image pytesseract Pillow pandas python-dateutil opencv-python numpy`
+- **Grid detection fails**: Check PDF quality, may need to adjust thresholds in `grid_detector.py`
 - **Check logs**: Review `voter_extraction.log` for details
 
 ## Module Usage
@@ -90,15 +92,23 @@ Use modules independently:
 
 ```python
 from pdf_converter import pdf_to_images
+from grid_detector import detect_voter_blocks
 from ocr_processor import perform_ocr
-from text_parser import extract_voter_blocks
+from text_parser import parse_single_block
 from data_saver import save_voters_to_csv
 
 images = pdf_to_images("input_pdfs/booth_001.pdf")
+all_voters = []
 for page_num, image in images:
-    text = perform_ocr(image)
-    voters = extract_voter_blocks(text)
-    save_voters_to_csv(voters, "booth_001")
+    # Detect grid and extract blocks
+    blocks = detect_voter_blocks(image)
+    # OCR and parse each block
+    for block in blocks:
+        text = perform_ocr(block)
+        voter = parse_single_block(text)
+        if voter:
+            all_voters.append(voter)
+save_voters_to_csv(all_voters, "booth_001")
 ```
 
 ## Performance
