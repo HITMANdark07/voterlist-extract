@@ -104,18 +104,57 @@ def detect_voter_blocks_with_paddleocr(image: Image.Image) -> List[Dict]:
         
         # Run structure analysis
         # PPStructureV3 can accept PIL Image directly or numpy array
-        # Try PIL Image first, fallback to numpy array
+        # Try different methods: .ocr(), .predict(), or direct call
+        img_array = np.array(image)
+        if len(img_array.shape) == 3:
+            img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        else:
+            img_bgr = img_array
+        
+        # Try different calling methods
+        result = None
+        last_error = None
+        
+        # Method 1: Try .ocr() method with numpy array
         try:
-            result = structure_engine(image)
+            if hasattr(structure_engine, 'ocr'):
+                result = structure_engine.ocr(img_bgr)
         except (TypeError, AttributeError) as e:
-            # If PIL Image doesn't work, convert to numpy array
-            logger.debug(f"Trying numpy array format: {e}")
-            img_array = np.array(image)
-            if len(img_array.shape) == 3:
-                img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-            else:
-                img_bgr = img_array
-            result = structure_engine(img_bgr)
+            last_error = e
+            logger.debug(f"Method .ocr() with numpy array failed: {e}")
+        
+        # Method 2: Try .predict() method with numpy array
+        if result is None:
+            try:
+                if hasattr(structure_engine, 'predict'):
+                    result = structure_engine.predict(img_bgr)
+            except (TypeError, AttributeError) as e:
+                last_error = e
+                logger.debug(f"Method .predict() with numpy array failed: {e}")
+        
+        # Method 3: Try direct call with numpy array
+        if result is None:
+            try:
+                result = structure_engine(img_bgr)
+            except (TypeError, AttributeError) as e:
+                last_error = e
+                logger.debug(f"Direct call with numpy array failed: {e}")
+        
+        # If numpy array didn't work, try PIL Image
+        if result is None:
+            try:
+                if hasattr(structure_engine, 'ocr'):
+                    result = structure_engine.ocr(image)
+                elif hasattr(structure_engine, 'predict'):
+                    result = structure_engine.predict(image)
+                else:
+                    result = structure_engine(image)
+            except (TypeError, AttributeError) as e:
+                last_error = e
+                logger.debug(f"Trying PIL Image format also failed: {e}")
+        
+        if result is None:
+            raise ValueError(f"Unable to call PPStructureV3 with any method. Last error: {last_error}")
         
         # Extract blocks from result
         # PPStructureV3 returns a dict with structure:
@@ -217,10 +256,10 @@ def detect_blocks_with_regular_ocr(image: Image.Image) -> List[Dict]:
         List of detected blocks with text and bounding boxes
     """
     try:
-        ocr_engine = PaddleOCR(use_angle_cls=True, lang='hi')
+        ocr_engine = PaddleOCR(use_textline_orientation=True, lang='hi')
         
         img_array = np.array(image)
-        result = ocr_engine.ocr(img_array, cls=True)
+        result = ocr_engine.predict(img_array, cls=True)
         
         blocks = []
         if result and result[0]:
