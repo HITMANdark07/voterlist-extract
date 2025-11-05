@@ -12,7 +12,9 @@ Tests the block_splitter module by:
 
 import sys
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageFilter
+import numpy as np
+import cv2
 
 # Import modules
 from config import INPUT_DIR, TEMP_DIR
@@ -22,6 +24,102 @@ from block_splitter import split_voter_block
 
 # Setup
 BLOCK_SPLIT_OUTPUT_DIR = Path(TEMP_DIR) / "block_split"
+
+
+def sharpen_image(image: Image.Image) -> Image.Image:
+    """
+    Sharpen the image using unsharp mask filter.
+    
+    Args:
+        image: PIL Image object
+        
+    Returns:
+        Sharpened PIL Image object
+    """
+    # Apply unsharp mask filter (radius=2, percent=150, threshold=3)
+    # This enhances edges and improves OCR accuracy
+    sharpened = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+    return sharpened
+
+
+def remove_lines_and_boxes(image: Image.Image) -> Image.Image:
+    """
+    Remove non-character lines and boxes from an image region.
+    This helps clean up serial numbers, EPIC numbers, and details regions
+    by removing grid lines and borders that interfere with OCR.
+    
+    Args:
+        image: PIL Image object
+        
+    Returns:
+        Cleaned PIL Image object with lines/boxes removed
+    """
+    try:
+        # Convert PIL Image to OpenCV format
+        img_array = np.array(image)
+        if len(img_array.shape) == 3:
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = img_array.copy()
+        
+        # Create a copy for processing
+        cleaned = gray.copy()
+        
+        # Convert to binary for better line detection
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # Detect and remove horizontal lines
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+        detected_lines_h = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
+        cnts_h = cv2.findContours(detected_lines_h, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts_h = cnts_h[0] if len(cnts_h) == 2 else cnts_h[1]
+        for c in cnts_h:
+            # Fill detected horizontal lines with white (background color)
+            cv2.drawContours(cleaned, [c], -1, (255, 255, 255), 3)
+        
+        # Detect and remove vertical lines
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40))
+        detected_lines_v = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
+        cnts_v = cv2.findContours(detected_lines_v, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts_v = cnts_v[0] if len(cnts_v) == 2 else cnts_v[1]
+        for c in cnts_v:
+            # Fill detected vertical lines with white (background color)
+            cv2.drawContours(cleaned, [c], -1, (255, 255, 255), 3)
+        
+        # Detect and remove rectangular boxes (boundaries)
+        # Find contours that might be boxes
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        height, width = gray.shape
+        
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            area = w * h
+            img_area = width * height
+            
+            # Check if this is likely a border box (large area, near edges)
+            is_border = (
+                (x < 5 or y < 5 or x + w > width - 5 or y + h > height - 5) and
+                area > img_area * 0.3 and  # Large area
+                (w > width * 0.7 or h > height * 0.7)  # Spans most of width/height
+            )
+            
+            if is_border:
+                # Fill the border with white
+                cv2.drawContours(cleaned, [contour], -1, (255, 255, 255), 3)
+                # Also fill the rectangle area
+                cv2.rectangle(cleaned, (x, y), (x + w, y + h), (255, 255, 255), 3)
+        
+        # Convert back to PIL Image
+        # Ensure it's RGB if original was RGB
+        if len(img_array.shape) == 3:
+            cleaned_rgb = cv2.cvtColor(cleaned, cv2.COLOR_GRAY2RGB)
+            return Image.fromarray(cleaned_rgb)
+        else:
+            return Image.fromarray(cleaned)
+            
+    except Exception as e:
+        print(f"   ⚠️  Error removing lines/boxes: {e}, using original image")
+        return image  # Return original on error
 
 
 def setup_output_dir():
@@ -74,25 +172,39 @@ def test_block_splitter(pdf_path: str):
         # Step 4: Split each block and save regions
         for block_idx, block_image in enumerate(voter_blocks):
             try:
+                # Sharpen the block image before processing
+                sharpened_block = sharpen_image(block_image)
+                
                 # Create sequence folder
                 seq_folder = BLOCK_SPLIT_OUTPUT_DIR / f"{sequence:04d}"
                 seq_folder.mkdir(parents=True, exist_ok=True)
                 
-                # Save original block
+                # Save original block (sharpened)
                 block_path = seq_folder / "block.jpg"
-                block_image.save(block_path, 'JPEG', quality=95)
+                sharpened_block.save(block_path, 'JPEG', quality=95)
                 
-                # Split block into regions
-                regions = split_voter_block(block_image)
+                # Split block into regions (using sharpened image)
+                regions = split_voter_block(sharpened_block)
                 
-                # Save each region
+                # Clean serial_no and epic regions: remove lines and boxes before saving
+                # Keep details region as-is (no cleaning)
+                cleaned_regions = {
+                    'serial_no': remove_lines_and_boxes(regions['serial_no']),
+                    'epic': remove_lines_and_boxes(regions['epic']),
+                    'details': regions['details']  # Keep original, no cleaning
+                }
+                
+                # Save each cleaned region
                 serial_path = seq_folder / "serial_no.jpg"
                 epic_path = seq_folder / "epic.jpg"
                 details_path = seq_folder / "details.jpg"
                 
-                regions['serial_no'].save(serial_path, 'JPEG', quality=95)
-                regions['epic'].save(epic_path, 'JPEG', quality=95)
-                regions['details'].save(details_path, 'JPEG', quality=95)
+                cleaned_regions['serial_no'].save(serial_path, 'JPEG', quality=95)
+                cleaned_regions['epic'].save(epic_path, 'JPEG', quality=95)
+                cleaned_regions['details'].save(details_path, 'JPEG', quality=95)
+                
+                # Update print statement to use cleaned regions
+                regions = cleaned_regions
                 
                 # Print region sizes
                 print(f"   Block {block_idx + 1}: Serial={regions['serial_no'].size}, "

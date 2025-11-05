@@ -58,7 +58,7 @@ def perform_ocr_from_file(image_path: str) -> str:
 def ocr_serial_number(region: Image.Image) -> str:
     """
     Perform OCR on serial number region (small box, single line).
-    Uses PSM 7 (single text line) for better accuracy.
+    Uses PSM 7 (single text line) and English only for better accuracy.
     
     Args:
         region: PIL Image object of serial number region
@@ -69,7 +69,7 @@ def ocr_serial_number(region: Image.Image) -> str:
     try:
         text = pytesseract.image_to_string(
             region,
-            lang=OCR_LANGUAGE,
+            lang="eng",  # English only for numeric/alphanumeric serial numbers
             config='--psm 7'  # Single text line
         )
         return text.strip()
@@ -81,7 +81,7 @@ def ocr_serial_number(region: Image.Image) -> str:
 def ocr_epic_number(region: Image.Image) -> str:
     """
     Perform OCR on EPIC number region (top-right, alphanumeric).
-    Uses PSM 7 (single text line) for better accuracy.
+    Uses PSM 7 (single text line) and English only for better accuracy.
     
     Args:
         region: PIL Image object of EPIC number region
@@ -92,7 +92,7 @@ def ocr_epic_number(region: Image.Image) -> str:
     try:
         text = pytesseract.image_to_string(
             region,
-            lang=OCR_LANGUAGE,
+            lang="eng",  # English only for alphanumeric EPIC numbers
             config='--psm 7'  # Single text line
         )
         return text.strip()

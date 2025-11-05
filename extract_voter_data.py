@@ -8,7 +8,9 @@ Orchestrates the PDF to CSV extraction pipeline using modular components.
 import logging
 from pathlib import Path
 from typing import List, Dict
-from PIL import Image
+from PIL import Image, ImageFilter
+import numpy as np
+import cv2
 
 # Import modules
 from config import INPUT_DIR, OUTPUT_DIR, TEMP_DIR, USE_MULTIPROCESSING, MAX_WORKERS
@@ -29,6 +31,103 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+def sharpen_image(image: Image.Image) -> Image.Image:
+    """
+    Sharpen the image using unsharp mask filter.
+    Enhances edges and improves OCR accuracy while maintaining high quality.
+    
+    Args:
+        image: PIL Image object
+        
+    Returns:
+        Sharpened PIL Image object
+    """
+    # Apply unsharp mask filter (radius=2, percent=150, threshold=3)
+    # This enhances edges and improves OCR accuracy
+    sharpened = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+    return sharpened
+
+
+def remove_lines_and_boxes(image: Image.Image) -> Image.Image:
+    """
+    Remove non-character lines and boxes from an image region.
+    This helps clean up serial numbers and EPIC numbers by removing
+    grid lines and borders that interfere with OCR.
+    
+    Args:
+        image: PIL Image object
+        
+    Returns:
+        Cleaned PIL Image object with lines/boxes removed
+    """
+    try:
+        # Convert PIL Image to OpenCV format
+        img_array = np.array(image)
+        if len(img_array.shape) == 3:
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = img_array.copy()
+        
+        # Create a copy for processing
+        cleaned = gray.copy()
+        
+        # Convert to binary for better line detection
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # Detect and remove horizontal lines
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+        detected_lines_h = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
+        cnts_h = cv2.findContours(detected_lines_h, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts_h = cnts_h[0] if len(cnts_h) == 2 else cnts_h[1]
+        for c in cnts_h:
+            # Fill detected horizontal lines with white (background color)
+            cv2.drawContours(cleaned, [c], -1, (255, 255, 255), 3)
+        
+        # Detect and remove vertical lines
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40))
+        detected_lines_v = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
+        cnts_v = cv2.findContours(detected_lines_v, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts_v = cnts_v[0] if len(cnts_v) == 2 else cnts_v[1]
+        for c in cnts_v:
+            # Fill detected vertical lines with white (background color)
+            cv2.drawContours(cleaned, [c], -1, (255, 255, 255), 3)
+        
+        # Detect and remove rectangular boxes (boundaries)
+        # Find contours that might be boxes
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        height, width = gray.shape
+        
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            area = w * h
+            img_area = width * height
+            
+            # Check if this is likely a border box (large area, near edges)
+            is_border = (
+                (x < 5 or y < 5 or x + w > width - 5 or y + h > height - 5) and
+                area > img_area * 0.3 and  # Large area
+                (w > width * 0.7 or h > height * 0.7)  # Spans most of width/height
+            )
+            
+            if is_border:
+                # Fill the border with white
+                cv2.drawContours(cleaned, [contour], -1, (255, 255, 255), 3)
+                # Also fill the rectangle area
+                cv2.rectangle(cleaned, (x, y), (x + w, y + h), (255, 255, 255), 3)
+        
+        # Convert back to PIL Image
+        # Ensure it's RGB if original was RGB
+        if len(img_array.shape) == 3:
+            cleaned_rgb = cv2.cvtColor(cleaned, cv2.COLOR_GRAY2RGB)
+            return Image.fromarray(cleaned_rgb)
+        else:
+            return Image.fromarray(cleaned)
+            
+    except Exception as e:
+        logger.debug(f"Error removing lines/boxes: {e}, using original image")
+        return image  # Return original on error
 
 
 def setup_directories():
@@ -64,13 +163,21 @@ def extract_voter_data_from_image(image: Image.Image, page_num: int) -> List[Dic
     voters = []
     for block_idx, block_image in enumerate(voter_blocks):
         try:
+            # Sharpen the block image before processing (maintains high quality)
+            sharpened_block = sharpen_image(block_image)
+            
             # Split block into regions
-            regions = split_voter_block(block_image)
+            regions = split_voter_block(sharpened_block)
+            
+            # Clean serial_no and epic regions: remove lines and boxes
+            # Keep details region as-is (no cleaning to preserve formatting)
+            cleaned_serial = remove_lines_and_boxes(regions['serial_no'])
+            cleaned_epic = remove_lines_and_boxes(regions['epic'])
             
             # Perform OCR on each region with appropriate PSM mode
-            serial_text = ocr_serial_number(regions['serial_no'])
-            epic_text = ocr_epic_number(regions['epic'])
-            details_text = ocr_details(regions['details'])
+            serial_text = ocr_serial_number(cleaned_serial)
+            epic_text = ocr_epic_number(cleaned_epic)
+            details_text = ocr_details(regions['details'])  # Use original details region
             
             if not epic_text.strip() and not details_text.strip():
                 logger.debug(f"Page {page_num}, Block {block_idx + 1}: No text extracted from regions")
@@ -121,26 +228,31 @@ def process_pdf(pdf_path: str) -> bool:
             logger.warning(f"No pages to process in {pdf_name}")
             return False
         
-        # Step 2 & 3: Extract voter data from all pages
+        # Step 2 & 3: Process all pages and accumulate voters
         all_voters = []
         
         for page_num, image in page_images:
+            # Extract voter data from current page
             voters = extract_voter_data_from_image(image, page_num)
-            all_voters.extend(voters)
+            
+            if voters:
+                all_voters.extend(voters)
+                logger.info(f"✅ Page {page_num}: Extracted {len(voters)} voters (Total: {len(all_voters)})")
+            else:
+                logger.warning(f"Page {page_num}: No voters extracted")
         
-        if not all_voters:
-            logger.warning(f"No voter data extracted from {pdf_name}")
-            return False
-        
-        # Step 4: Save to CSV
-        output_path = save_voters_to_csv(all_voters, pdf_name)
-        
-        if output_path:
-            logger.info(f"✅ Successfully extracted {len(all_voters)} voters")
-            logger.info(f"✅ Saved to: {output_path}")
-            return True
+        # Step 4: Save all accumulated voters to CSV at the end
+        if all_voters:
+            output_path = save_voters_to_csv(all_voters, pdf_name)
+            if output_path:
+                logger.info(f"✅ Successfully extracted {len(all_voters)} voters from all pages")
+                logger.info(f"✅ Saved to: {output_path}")
+                return True
+            else:
+                logger.error(f"Failed to save CSV for {pdf_name}")
+                return False
         else:
-            logger.error(f"Failed to save CSV for {pdf_name}")
+            logger.warning(f"No voter data extracted from {pdf_name}")
             return False
         
     except Exception as e:
