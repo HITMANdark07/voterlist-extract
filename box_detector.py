@@ -15,6 +15,57 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def deduplicate_boxes(boxes: List[List[int]], overlap_threshold: float = 0.8) -> List[List[int]]:
+    """
+    Remove duplicate or highly overlapping boxes.
+    
+    Args:
+        boxes: List of box coordinates [x1, y1, x2, y2]
+        overlap_threshold: Threshold for considering boxes as duplicates (0.0-1.0)
+    
+    Returns:
+        List of deduplicated boxes
+    """
+    if not boxes:
+        return []
+    
+    deduplicated = []
+    
+    for box in boxes:
+        x1, y1, x2, y2 = box
+        box_area = (x2 - x1) * (y2 - y1)
+        
+        is_duplicate = False
+        
+        for existing_box in deduplicated:
+            ex1, ey1, ex2, ey2 = existing_box
+            existing_area = (ex2 - ex1) * (ey2 - ey1)
+            
+            # Calculate intersection
+            inter_x1 = max(x1, ex1)
+            inter_y1 = max(y1, ey1)
+            inter_x2 = min(x2, ex2)
+            inter_y2 = min(y2, ey2)
+            
+            if inter_x2 > inter_x1 and inter_y2 > inter_y1:
+                inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+                
+                # Calculate overlap ratio (intersection over smaller box)
+                smaller_area = min(box_area, existing_area)
+                overlap_ratio = inter_area / smaller_area if smaller_area > 0 else 0
+                
+                # If overlap is high, consider it a duplicate
+                if overlap_ratio >= overlap_threshold:
+                    is_duplicate = True
+                    break
+        
+        if not is_duplicate:
+            deduplicated.append(box)
+    
+    logger.debug(f"Deduplicated boxes: {len(boxes)} -> {len(deduplicated)}")
+    return deduplicated
+
+
 def find_inner_boxes(filepath: str, min_box_width: int = 20, min_box_height: int = 20, 
                      border_threshold: float = 0.9) -> Tuple[List[List[int]], np.ndarray]:
     """
@@ -73,6 +124,9 @@ def find_inner_boxes(filepath: str, min_box_width: int = 20, min_box_height: int
 
     # Sort boxes top-to-bottom, then left-to-right
     boxes = sorted(boxes, key=lambda b: (b[1], b[0]))
+    
+    # Remove duplicate/overlapping boxes
+    boxes = deduplicate_boxes(boxes)
 
     return boxes, img_with_boxes
 
@@ -138,8 +192,62 @@ def find_inner_boxes_from_image(image: Image.Image, min_box_width: int = 20,
 
     # Sort boxes top-to-bottom, then left-to-right
     boxes = sorted(boxes, key=lambda b: (b[1], b[0]))
+    
+    # Remove duplicate/overlapping boxes
+    boxes = deduplicate_boxes(boxes)
 
     return boxes, img_with_boxes
+
+
+def deduplicate_boxes(boxes: List[List[int]], overlap_threshold: float = 0.8) -> List[List[int]]:
+    """
+    Remove duplicate or highly overlapping boxes.
+    
+    Args:
+        boxes: List of box coordinates [x1, y1, x2, y2]
+        overlap_threshold: Threshold for considering boxes as duplicates (0.0-1.0)
+    
+    Returns:
+        List of deduplicated boxes
+    """
+    if not boxes:
+        return []
+    
+    deduplicated = []
+    
+    for box in boxes:
+        x1, y1, x2, y2 = box
+        box_area = (x2 - x1) * (y2 - y1)
+        
+        is_duplicate = False
+        
+        for existing_box in deduplicated:
+            ex1, ey1, ex2, ey2 = existing_box
+            existing_area = (ex2 - ex1) * (ey2 - ey1)
+            
+            # Calculate intersection
+            inter_x1 = max(x1, ex1)
+            inter_y1 = max(y1, ey1)
+            inter_x2 = min(x2, ex2)
+            inter_y2 = min(y2, ey2)
+            
+            if inter_x2 > inter_x1 and inter_y2 > inter_y1:
+                inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+                
+                # Calculate overlap ratio (intersection over union or intersection over smaller box)
+                smaller_area = min(box_area, existing_area)
+                overlap_ratio = inter_area / smaller_area if smaller_area > 0 else 0
+                
+                # If overlap is high, consider it a duplicate
+                if overlap_ratio >= overlap_threshold:
+                    is_duplicate = True
+                    break
+        
+        if not is_duplicate:
+            deduplicated.append(box)
+    
+    logger.debug(f"Deduplicated boxes: {len(boxes)} -> {len(deduplicated)}")
+    return deduplicated
 
 
 def color_boxes_white(image: Image.Image, boxes: List[List[int]]) -> Image.Image:

@@ -223,22 +223,32 @@ def extract_blocks_fallback(image: Image.Image) -> List[Image.Image]:
         binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                                      cv2.THRESH_BINARY_INV, 11, 2)
         
-        # Find contours
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Find contours - use RETR_TREE to find nested contours (voter grids inside table structure)
+        contours, hierarchy = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         
         blocks = []
         height, width = image.size[1], image.size[0]
         
-        for contour in contours:
+        # Store blocks with their positions for proper sorting
+        blocks_with_pos = []
+        
+        for i, contour in enumerate(contours):
             x, y, w, h = cv2.boundingRect(contour)
             
-            # Stricter filtering for voter blocks
+            # Relaxed filtering for voter blocks to catch more grids
             aspect_ratio = w / h if h > 0 else 0
+            area = w * h
             
-            if (150 < h < height * 0.35 and 
-                300 < w < width * 0.7 and
-                1.5 < aspect_ratio < 5.0 and
-                w * h > 50000):
+            # More lenient criteria:
+            # - Height should be reasonable (100-500 pixels, or up to 40% of page height)
+            # - Width should be reasonable (200-800 pixels, or up to 80% of page width)
+            # - Aspect ratio should be reasonable (1.2-6.0 for voter blocks)
+            # - Minimum area should be reasonable (30000 instead of 50000)
+            
+            if (100 < h < max(500, height * 0.4) and 
+                200 < w < max(800, width * 0.8) and
+                1.2 < aspect_ratio < 6.0 and
+                area > 30000):
                 
                 # Extract block with padding
                 padding = 5
@@ -249,12 +259,38 @@ def extract_blocks_fallback(image: Image.Image) -> List[Image.Image]:
                 
                 block = img_array[y1:y2, x1:x2]
                 block_image = Image.fromarray(block)
-                blocks.append(block_image)
+                
+                # Store with position for sorting
+                blocks_with_pos.append((y, x, block_image))
         
-        # Sort blocks by position (top to bottom, left to right)
-        blocks.sort(key=lambda img: (img.size[1], img.size[0]))
+        # Sort blocks by position (top to bottom, then left to right)
+        blocks_with_pos.sort(key=lambda b: (b[0], b[1]))
         
-        logger.info(f"Contour method extracted {len(blocks)} blocks")
+        # Remove duplicate/overlapping blocks
+        filtered_blocks = []
+        for y, x, block_img in blocks_with_pos:
+            # Check if this block overlaps significantly with any existing block
+            is_duplicate = False
+            for existing_y, existing_x, existing_block in filtered_blocks:
+                # Calculate overlap
+                overlap_threshold = 0.7  # 70% overlap means duplicate
+                
+                # Simple overlap check based on position and size
+                y_diff = abs(y - existing_y)
+                x_diff = abs(x - existing_x)
+                h_overlap = min(block_img.size[1], existing_block.size[1])
+                w_overlap = min(block_img.size[0], existing_block.size[0])
+                
+                if y_diff < h_overlap * overlap_threshold and x_diff < w_overlap * overlap_threshold:
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                filtered_blocks.append((y, x, block_img))
+        
+        blocks = [block for _, _, block in filtered_blocks]
+        
+        logger.info(f"Contour method extracted {len(blocks)} blocks (after deduplication)")
         return blocks
         
     except Exception as e:
