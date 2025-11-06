@@ -61,13 +61,14 @@ ocr-poc/
 ├── pdf_converter.py             # PDF → Image conversion
 ├── grid_detector.py             # Grid detection & extraction
 ├── box_detector.py              # Box detection & segmentation
-├── ocr_processor.py            # Image → Text (OCR using Tesseract)
+├── ocr_processor.py            # Low-level OCR functions (Tesseract wrapper)
+├── tesseract_ocr.py            # Tesseract OCR extraction from grid segments
+├── paddleocr.py                # PaddleOCR extraction from grid segments
+├── ocr_factory.py              # OCR engine factory (switches between engines)
 ├── text_parser.py              # Text → Structured data
 ├── data_saver.py               # Data → CSV/Excel
-├── extract_voter_data_paddleocr.py  # PaddleOCR implementation (for future use)
 ├── test_box_detection.py       # Test box detection pipeline
 ├── verify_setup.py             # Setup verification
-├── PADDLEOCR_SETUP.md          # PaddleOCR setup guide
 ├── requirements.txt            # Python dependencies
 ├── input_pdfs/                 # Place PDFs here
 ├── output_csv/                 # Results appear here
@@ -81,7 +82,8 @@ Edit `config.py` to adjust settings:
 
 ```python
 IMAGE_DPI = 400              # Image quality (300-600)
-OCR_LANGUAGE = "hin+eng"     # OCR languages
+OCR_ENGINE = "tesseract"     # OCR engine: "tesseract" or "paddleocr"
+OCR_LANGUAGE = "hin+eng"     # OCR languages (for Tesseract)
 SKIP_FIRST_N_PAGES = 2       # Skip metadata pages
 SKIP_LAST_N_PAGES = 1        # Skip summary page
 TEST_MODE = True             # Process only first page (for testing)
@@ -140,9 +142,25 @@ python test_box_detection.py
 
 This will save segmented images to `temp_images/box_detection/` for inspection.
 
-## PaddleOCR Option
+## OCR Engine Selection
 
-For future use, PaddleOCR implementation is available in `extract_voter_data_paddleocr.py`. See `PADDLEOCR_SETUP.md` for setup instructions.
+The system supports two OCR engines. Switch between them in `config.py`:
+
+```python
+OCR_ENGINE = "tesseract"  # or "paddleocr"
+```
+
+### Tesseract OCR (Default)
+- **Pros**: Fast, lightweight, good for English + Hindi
+- **Cons**: May struggle with complex layouts
+- **Setup**: `brew install tesseract tesseract-lang` (macOS) or `sudo apt-get install tesseract-ocr tesseract-ocr-hin` (Linux)
+
+### PaddleOCR
+- **Pros**: Better accuracy for complex layouts, better Hindi support
+- **Cons**: Slower, requires more memory
+- **Setup**: `pip install paddleocr paddlepaddle`
+
+The system will automatically use the selected engine. Both engines extract text from the same grid segments.
 
 ## Troubleshooting
 
@@ -161,7 +179,7 @@ Use modules independently:
 from pdf_converter import pdf_to_images
 from grid_detector import detect_voter_blocks
 from box_detector import process_grid
-from ocr_processor import perform_ocr, ocr_serial_number, ocr_epic_number
+from ocr_factory import extract_text_from_grid_segments
 from text_parser import parse_from_regions
 from data_saver import save_voters_to_csv
 
@@ -171,8 +189,16 @@ for page_num, image in images:
     blocks = detect_voter_blocks(image)
     for block in blocks:
         grid_data = process_grid(block)
-        # Process grid_data...
-        voters.append(voter_data)
+        # Extract text using OCR (uses OCR_ENGINE from config)
+        ocr_results = extract_text_from_grid_segments(grid_data, page_num, 0)
+        # Parse voter data
+        voter_data = parse_from_regions(
+            ocr_results['serial_text'],
+            ocr_results['epic_text'],
+            ocr_results['details_text']
+        )
+        if voter_data:
+            voters.append(voter_data)
 save_voters_to_csv(all_voters, "booth_001")
 ```
 
