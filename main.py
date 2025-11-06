@@ -88,7 +88,7 @@ def extract_voter_data_from_grid(grid_data: Dict, page_num: int, grid_idx: int) 
         return None
 
 
-def extract_voter_data_from_image(image: Image.Image, page_num: int) -> List[Dict]:
+def extract_voter_data_from_image(image: Image.Image, page_num: int) -> tuple:
     """
     Extract voter data from a single page image.
     
@@ -97,12 +97,13 @@ def extract_voter_data_from_image(image: Image.Image, page_num: int) -> List[Dic
         page_num: Page number for logging
     
     Returns:
-        List of voter dictionaries
+        Tuple of (list of voter dictionaries, number of grids detected)
     """
     voter_blocks = detect_voter_blocks(image)
+    num_grids = len(voter_blocks)
     
     if not voter_blocks:
-        return []
+        return [], 0
     
     voters = []
     for grid_idx, grid_image in enumerate(voter_blocks):
@@ -116,7 +117,7 @@ def extract_voter_data_from_image(image: Image.Image, page_num: int) -> List[Dic
             logger.debug(f"Page {page_num}, Grid {grid_idx + 1}: Error - {e}")
             continue
     
-    return voters
+    return voters, num_grids
 
 
 def process_pdf(pdf_path: str) -> bool:
@@ -148,7 +149,18 @@ def process_pdf(pdf_path: str) -> bool:
         
         all_voters = []
         for page_num, image in page_images:
-            voters = extract_voter_data_from_image(image, page_num)
+            voters, num_grids = extract_voter_data_from_image(image, page_num)
+            
+            # Log grid count and voter count for this page
+            num_voters = len(voters)
+            logger.info(f"Page {page_num}: Grids detected: {num_grids}, Voters extracted: {num_voters}")
+            
+            # Stop if counts don't match
+            if num_grids != num_voters:
+                logger.error(f"Page {page_num}: Mismatch detected! Grids: {num_grids}, Voters: {num_voters}")
+                logger.error(f"Stopping execution due to mismatch on page {page_num}")
+                raise ValueError(f"Grid count ({num_grids}) does not match voter count ({num_voters}) on page {page_num}")
+            
             all_voters.extend(voters)
         
         if not all_voters:
