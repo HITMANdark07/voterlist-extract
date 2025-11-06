@@ -13,7 +13,7 @@ OUTPUT_DIR = "output_csv"
 TEMP_DIR = "temp_images"
 
 # OCR settings
-OCR_ENGINE = "tesseract"  # Options: "tesseract" or "paddleocr"
+OCR_ENGINE = "paddleocr"  # Options: "tesseract" or "paddleocr"
 OCR_LANGUAGE = "hin+eng"  # Hindi + English
 IMAGE_DPI = 400  # Higher DPI for better OCR accuracy
 TESSERACT_CONFIG = '--psm 6'  # Assume uniform block of text

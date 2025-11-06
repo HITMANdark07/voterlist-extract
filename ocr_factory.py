@@ -33,7 +33,7 @@ def extract_text_from_grid_segments(grid_data: Dict, page_num: int = 0, grid_idx
     
     if ocr_engine == "paddleocr":
         logger.debug(f"Using PaddleOCR for text extraction")
-        from paddleocr import extract_text_from_grid_segments as paddle_extract
+        from paddleocr_extractor import extract_text_from_grid_segments as paddle_extract
         return paddle_extract(grid_data, page_num, grid_idx)
     else:
         # Default to Tesseract

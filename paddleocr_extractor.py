@@ -17,13 +17,21 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# Try to import PaddleOCR
+# Try to import PaddleOCR (classic)
 try:
     from paddleocr import PaddleOCR
     HAS_PADDLEOCR = True
 except ImportError:
     HAS_PADDLEOCR = False
     logger.warning("PaddleOCR not available. Install with: pip install paddleocr")
+
+# Try to import PaddleOCR-VL (vision-language)
+try:
+    from paddleocr import PaddleOCRVL  # available in newer paddleocr releases
+    HAS_PADDLEOCR_VL = False
+except Exception:
+    HAS_PADDLEOCR_VL = False
+    # Keep silent here; we'll fallback to classic and log only if both unavailable
 
 
 def _get_paddleocr_engine():
@@ -32,7 +40,17 @@ def _get_paddleocr_engine():
         raise ImportError("PaddleOCR is not installed. Install with: pip install paddleocr")
     
     # Create engine with Hindi language support
-    return PaddleOCR(use_angle_cls=True, lang='hi', use_gpu=False)
+    # Note: GPU usage is controlled by PaddlePaddle environment, not PaddleOCR constructor
+    return PaddleOCR(lang='hi', use_doc_orientation_classify=True)
+
+
+def _get_paddleocr_vl_pipeline():
+    """Get or create PaddleOCR-VL pipeline instance."""
+    if not HAS_PADDLEOCR_VL:
+        raise ImportError("PaddleOCRVL is not available in your paddleocr install.")
+    # Initialize with default models; auto-rotation enabled
+    # Note: model_name parameter doesn't exist, using default model names
+    return PaddleOCRVL(use_doc_orientation_classify=True)
 
 
 def extract_serial_numbers_from_boxes(serial_boxes: List[List[int]], 
@@ -75,7 +93,7 @@ def extract_serial_numbers_from_boxes(serial_boxes: List[List[int]],
             
             # Perform OCR
             try:
-                result = ocr_engine.ocr(img_array, cls=True)
+                result = ocr_engine.ocr(img_array)
                 if result and result[0]:
                     # Combine all detected text
                     text_lines = []
@@ -118,7 +136,7 @@ def _perform_paddleocr(image: Image.Image) -> str:
             img_array = np.stack([img_array] * 3, axis=-1)
         
         # Perform OCR
-        result = ocr_engine.ocr(img_array, cls=True)
+        result = ocr_engine.ocr(img_array)
         
         if result and result[0]:
             text_lines = []
@@ -133,6 +151,71 @@ def _perform_paddleocr(image: Image.Image) -> str:
         return ""
     except Exception as e:
         logger.error(f"PaddleOCR error: {e}")
+        return ""
+
+
+def _safe_predict_vl(pipeline, image: Image.Image) -> dict:
+    """
+    Run PaddleOCR-VL prediction on a PIL Image.
+    Tries numpy array; falls back to temporary file path if needed.
+    Returns the raw result dict (or {}).
+    """
+    import tempfile
+    import os
+    try:
+        # Try numpy array directly
+        img_array = np.array(image)
+        return pipeline.predict(img_array)  # type: ignore[attr-defined]
+    except Exception:
+        # Fallback to temp file path
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                temp_path = tmp.name
+            image.save(temp_path)
+            try:
+                result = pipeline.predict(temp_path)  # type: ignore[attr-defined]
+            finally:
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+            return result
+        except Exception as e:
+            logger.error(f"PaddleOCR-VL predict error: {e}")
+            return {}
+
+
+def _perform_paddleocr_vl(image: Image.Image) -> str:
+    """
+    Perform OCR on an image using PaddleOCR-VL and return concatenated text.
+    """
+    if not HAS_PADDLEOCR_VL:
+        return ""
+    try:
+        pipeline = _get_paddleocr_vl_pipeline()
+        result = _safe_predict_vl(pipeline, image) or {}
+        # Expected structure per sample: result["text"] is a list of strings (or dicts)
+        text_lines = []
+        if isinstance(result, dict):
+            text_field = result.get("text")
+            if isinstance(text_field, list):
+                for item in text_field:
+                    if isinstance(item, str):
+                        if item.strip():
+                            text_lines.append(item.strip())
+                    elif isinstance(item, dict):
+                        # Some variants may return dicts with 'text' key
+                        val = item.get("text")
+                        if isinstance(val, str) and val.strip():
+                            text_lines.append(val.strip())
+        # Fallback: try to gather any string values in dict
+        if not text_lines and isinstance(result, dict):
+            for k, v in result.items():
+                if isinstance(v, str) and v.strip():
+                    text_lines.append(v.strip())
+        return "\n".join(text_lines)
+    except Exception as e:
+        logger.error(f"PaddleOCR-VL error: {e}")
         return ""
 
 
@@ -151,13 +234,9 @@ def extract_text_from_grid_segments(grid_data: Dict, page_num: int = 0, grid_idx
         - 'epic_text': EPIC number from right half
         - 'details_text': Details from left half
     """
-    if not HAS_PADDLEOCR:
-        logger.error("PaddleOCR not available. Falling back to empty results.")
-        return {
-            'serial_text': '',
-            'epic_text': '',
-            'details_text': ''
-        }
+    if not (HAS_PADDLEOCR or HAS_PADDLEOCR_VL):
+        logger.error("Neither PaddleOCR nor PaddleOCR-VL are available. Returning empty results.")
+        return {'serial_text': '', 'epic_text': '', 'details_text': ''}
     
     result = {
         'serial_text': '',
@@ -182,7 +261,11 @@ def extract_text_from_grid_segments(grid_data: Dict, page_num: int = 0, grid_idx
     # Perform OCR on right half (EPIC number section - 40%)
     right_half = grid_data.get('right_half')
     if right_half:
-        result['epic_text'] = _perform_paddleocr(right_half).strip()
+        # Prefer OCR-VL if available, else classic
+        if HAS_PADDLEOCR_VL:
+            result['epic_text'] = _perform_paddleocr_vl(right_half).strip()
+        else:
+            result['epic_text'] = _perform_paddleocr(right_half).strip()
         logger.debug(f"Page {page_num}, Grid {grid_idx + 1}: Right half OCR (EPIC): "
                     f"'{result['epic_text'][:100] if result['epic_text'] else 'EMPTY'}'")
     else:
@@ -191,7 +274,10 @@ def extract_text_from_grid_segments(grid_data: Dict, page_num: int = 0, grid_idx
     # Perform OCR on left half (details section - 60%)
     left_half = grid_data.get('left_half')
     if left_half:
-        result['details_text'] = _perform_paddleocr(left_half)
+        if HAS_PADDLEOCR_VL:
+            result['details_text'] = _perform_paddleocr_vl(left_half)
+        else:
+            result['details_text'] = _perform_paddleocr(left_half)
         logger.debug(f"Page {page_num}, Grid {grid_idx + 1}: Left half OCR (Details): "
                     f"'{result['details_text'][:200] if result['details_text'] else 'EMPTY'}...'")
     else:
@@ -202,7 +288,10 @@ def extract_text_from_grid_segments(grid_data: Dict, page_num: int = 0, grid_idx
         logger.warning(f"Page {page_num}, Grid {grid_idx + 1}: ⚠️ No text from segments, trying full grid OCR")
         image_with_white_boxes = grid_data.get('image_with_white_boxes')
         if image_with_white_boxes:
-            full_text = _perform_paddleocr(image_with_white_boxes)
+            if HAS_PADDLEOCR_VL:
+                full_text = _perform_paddleocr_vl(image_with_white_boxes)
+            else:
+                full_text = _perform_paddleocr(image_with_white_boxes)
             logger.debug(f"Page {page_num}, Grid {grid_idx + 1}: Full grid OCR text length: {len(full_text)}")
             
             # Try to extract EPIC from full text
