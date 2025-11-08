@@ -20,12 +20,12 @@ from config import INPUT_DIR, OUTPUT_DIR, USE_MULTIPROCESSING, MAX_WORKERS
 from pdf_converter import get_all_pages, get_single_page, get_page_range
 from grid_detector import detect_voter_blocks
 
-# Setup logging
+# Setup logging with UTF-8 encoding for Windows compatibility
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('pdf_processing.log'),
+        logging.FileHandler('pdf_processing.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -144,7 +144,7 @@ def process_page_1(pdf_path: str, pdf_name: str, output_base_dir: Path) -> bool:
         output_path = output_base_dir / "page_1.jpg"
         cropped_image.save(output_path, 'JPEG', quality=95)
         
-        logger.info(f"✅ Saved page 1 to: {output_path}")
+        logger.info(f"[OK] Saved page 1 to: {output_path}")
         return True
         
     except Exception as e:
@@ -205,9 +205,9 @@ def process_grid_pages(pdf_path: str, pdf_name: str, output_base_dir: Path,
                 total_grids += 1
                 grid_counter += 1
             
-            logger.info(f"✅ Saved {len(grids)} grids from page {page_num}")
+            logger.info(f"[OK] Saved {len(grids)} grids from page {page_num}")
         
-        logger.info(f"✅ Total grids saved: {total_grids}")
+        logger.info(f"[OK] Total grids saved: {total_grids}")
         return True
         
     except Exception as e:
@@ -260,7 +260,7 @@ def process_pdf(pdf_path: str) -> bool:
         else:
             logger.info(f"PDF has only {total_pages} pages, skipping grid processing")
         
-        logger.info(f"✅ Completed processing {pdf_name}")
+        logger.info(f"[OK] Completed processing {pdf_name}")
         return True
         
     except Exception as e:
@@ -304,7 +304,7 @@ def main():
     pdf_files = list(Path(INPUT_DIR).glob("*.pdf"))
     
     if not pdf_files:
-        print(f"\n❌ No PDF files found in '{INPUT_DIR}' directory.")
+        print(f"\n[ERROR] No PDF files found in '{INPUT_DIR}' directory.")
         print(f"Please place your PDF files in the '{INPUT_DIR}' folder and run again.")
         return
     
@@ -331,13 +331,13 @@ def main():
                     pdf_name, success = future.result()
                     if success:
                         successful += 1
-                        print(f"✅ Completed: {pdf_name}")
+                        print(f"[OK] Completed: {pdf_name}")
                     else:
-                        print(f"❌ Failed: {pdf_name}")
+                        print(f"[FAILED] Failed: {pdf_name}")
                 except Exception as e:
                     pdf_name = Path(pdf_path).stem
                     logger.error(f"Exception processing {pdf_name}: {e}", exc_info=True)
-                    print(f"❌ Error processing {pdf_name}: {e}")
+                    print(f"[ERROR] Error processing {pdf_name}: {e}")
     else:
         # Process PDFs sequentially
         if USE_MULTIPROCESSING:

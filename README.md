@@ -1,15 +1,18 @@
-# Voter Page Image Processing (No OCR)
+# Voter List Extraction and OCR Processing
 
-Process scanned Indian election PDF files into images only (no OCR). The pipeline:
+Process scanned Indian election PDF files with image extraction and OCR. The pipeline:
 - Crops page 1 by detected page contour
 - Detects voter grids on pages 3 to n-1
 - Saves each detected voter block as an image
+- Runs OCR on all extracted images using PaddleOCRVL
 
 ## Features
 
 - **Page 1 Cropping**: Detects main page contour and saves cropped page
 - **Grid Detection**: Automatically detects voter grids in relevant pages
-- **Image Outputs Only**: No OCR, no text parsing, no CSV export
+- **Image Extraction**: Saves extracted images in organized directory structure
+- **OCR Processing**: Runs PaddleOCRVL on all extracted images
+- **Structured Output**: Saves OCR results as JSON and Markdown files
 
 ## Quick Start
 
@@ -51,30 +54,41 @@ python -m pip install https://xly-devops.cdn.bcebos.com/safetensors-nightly/safe
 pip install -r requirements.txt
 ```
 
-### 3. Run Processing
+### 3. Extract Images from PDFs
 
 ```bash
 # Place PDFs in input_pdfs/
 cp /path/to/pdfs/*.pdf input_pdfs/
 
-# Run
+# Run image extraction
 python extract_voters.py
 
-# Check results
+# Check extracted images
 open output_images/
+```
+
+### 4. Run OCR Processing
+
+```bash
+# Process all extracted images with OCR
+python ocr_processor.py
+
+# OCR results will be saved alongside images
+# Each image will have corresponding .json and .md files
 ```
 
 ## Project Structure
 
 ```
 voterlist-extract/
-├── extract_voters.py       # Main processing script
+├── extract_voters.py       # Image extraction from PDFs
+├── ocr_processor.py       # OCR processing on extracted images
 ├── config.py               # Configuration settings
 ├── pdf_converter.py        # PDF → Image conversion helpers
 ├── grid_detector.py        # Grid detection (voter blocks)
 ├── requirements.txt        # Python dependencies
 ├── input_pdfs/             # Place PDFs here
-├── output_images/          # Image results
+├── output_images/          # Image and OCR results
 └── temp_images/            # Temporary files (debug)
 ```
 
@@ -90,14 +104,18 @@ OUTPUT_DIR = "output_images"
 
 ## Processing Flow
 
+### Step 1: Image Extraction (`extract_voters.py`)
+
 1. **Page 1**: Detect page contour and save cropped image as:
    - `output_images/{pdf_name}/page_1.jpg`
 2. **Pages 3 to n-1**: Detect voter grids and save each grid as:
    - `output_images/{pdf_name}/voters/voter_001.jpg`, `voter_002.jpg`, ...
 
-Notes:
-- There are no per-page folders for voters; images are numbered sequentially.
-- This repository currently does not perform OCR or CSV export.
+### Step 2: OCR Processing (`ocr_processor.py`)
+
+1. Scans all images in `output_images/` directory
+2. Processes each image with PaddleOCRVL
+3. Saves OCR results (JSON and Markdown) alongside each image
 
 ## Output Structure
 
@@ -105,10 +123,15 @@ Notes:
 output_images/
   {pdf_name}/
     page_1.jpg
+    page_1.json          # OCR result (JSON)
+    page_1.md            # OCR result (Markdown)
     voters/
       voter_001.jpg
+      voter_001.json     # OCR result (JSON)
+      voter_001.md       # OCR result (Markdown)
       voter_002.jpg
-      voter_003.jpg
+      voter_002.json
+      voter_002.md
       ...
 ```
 
@@ -118,7 +141,8 @@ output_images/
 - **No grids detected**: Adjust thresholds in `grid_detector.py`
 - **OpenCV issues**: Ensure `opencv-python-headless` is installed, or use `opencv-python` if you need GUI windows
 - **PaddleOCR/PaddlePaddle issues**: Ensure CUDA is properly installed for GPU support
-- **Check logs**: See `pdf_processing.log`
+- **OCR processing fails**: Make sure PaddleOCRVL is properly installed and GPU drivers are configured
+- **Check logs**: See `pdf_processing.log` for extraction and `ocr_processing.log` for OCR processing
 
 ## License
 
