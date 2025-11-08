@@ -11,7 +11,7 @@ import logging
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import Tuple, Optional
 from PIL import Image
 
 # Import modules
