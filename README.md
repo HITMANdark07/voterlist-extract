@@ -42,7 +42,7 @@ pip install -r requirements.txt
 cp /path/to/pdfs/*.pdf input_pdfs/
 
 # Run
-python main.py
+python extract_voters.py
 
 # Check results
 open output_images/
@@ -52,7 +52,7 @@ open output_images/
 
 ```
 ocr-poc/
-├── main.py                 # Main processing script
+├── extract_voters.py       # Main processing script
 ├── config.py               # Configuration settings
 ├── pdf_converter.py        # PDF → Image conversion helpers
 ├── grid_detector.py        # Grid detection (voter blocks)
