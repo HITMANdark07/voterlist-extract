@@ -32,3 +32,9 @@ Thumbs.db
 *.tmp
 *.bak
 
+# Output files
+output_csv/
+output_images/
+temp_images/
+input_pdfs/
+

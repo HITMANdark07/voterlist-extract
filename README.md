@@ -116,7 +116,7 @@ output_csv/
 └── images/
     └── {pdf_name}/
         └── page_{page_num}/
-            ├── grid_{idx}_before_ocr/    # Images before OCR
+            ├── voter_{idx}_before_ocr/    # Images before OCR
             │   ├── 00_original_grid.jpg
             │   ├── 01_grid_with_white_boxes.jpg
             │   ├── 02_left_half_60_percent.jpg
