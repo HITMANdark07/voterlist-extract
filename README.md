@@ -15,7 +15,12 @@ Process scanned Indian election PDF files into images only (no OCR). The pipelin
 
 ### 1. Install System Dependencies
 
-Poppler is required for PDF → image conversion.
+Poppler is required for PDF → image conversion (used by `pdf2image` library).
+
+**Windows:**
+- Download poppler from: https://github.com/oschwartz10612/poppler-windows/releases/
+- Extract and add the `bin` folder to your system PATH
+- Or install via conda: `conda install -c conda-forge poppler`
 
 **macOS:**
 ```bash
@@ -32,10 +37,21 @@ sudo apt-get install poppler-utils
 ```bash
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install PaddlePaddle GPU (required for PaddleOCR)
+python -m pip install paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
+
+# Install PaddleOCR with doc-parser support
+python -m pip install -U "paddleocr[doc-parser]"
+
+# Install safetensors (Windows-specific wheel)
+python -m pip install https://xly-devops.cdn.bcebos.com/safetensors-nightly/safetensors-0.6.2.dev0-cp38-abi3-win_amd64.whl
+
+# Install other dependencies
 pip install -r requirements.txt
 ```
 
-### 4. Run Processing
+### 3. Run Processing
 
 ```bash
 # Place PDFs in input_pdfs/
@@ -51,7 +67,7 @@ open output_images/
 ## Project Structure
 
 ```
-ocr-poc/
+voterlist-extract/
 ├── extract_voters.py       # Main processing script
 ├── config.py               # Configuration settings
 ├── pdf_converter.py        # PDF → Image conversion helpers
@@ -98,9 +114,10 @@ output_images/
 
 ## Troubleshooting
 
-- **PDF conversion fails**: Ensure Poppler is installed (`pdftoppm` available)
+- **PDF conversion fails**: Ensure Poppler is installed (`pdftoppm` available). The `pdf2image` library requires poppler to convert PDFs to images.
 - **No grids detected**: Adjust thresholds in `grid_detector.py`
 - **OpenCV issues**: Ensure `opencv-python-headless` is installed, or use `opencv-python` if you need GUI windows
+- **PaddleOCR/PaddlePaddle issues**: Ensure CUDA is properly installed for GPU support
 - **Check logs**: See `pdf_processing.log`
 
 ## License
