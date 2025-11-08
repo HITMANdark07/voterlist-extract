@@ -1,19 +1,30 @@
-# Indian Election Voter Data Extraction
+# Voter Page Image Processing (No OCR)
 
-Extract structured voter information from scanned Indian election PDF files using OCR.
+Process scanned Indian election PDF files into images only (no OCR). The pipeline:
+- Crops page 1 by detected page contour
+- Detects voter grids on pages 3 to n-1
+- Saves each detected voter block as an image
+
+## Features
+
+- **Page 1 Cropping**: Detects main page contour and saves cropped page
+- **Grid Detection**: Automatically detects voter grids in relevant pages
+- **Image Outputs Only**: No OCR, no text parsing, no CSV export
 
 ## Quick Start
 
 ### 1. Install System Dependencies
 
+Poppler is required for PDF → image conversion.
+
 **macOS:**
 ```bash
-brew install tesseract tesseract-lang poppler
+brew install poppler
 ```
 
-**Linux:**
+**Linux (Debian/Ubuntu):**
 ```bash
-sudo apt-get install tesseract-ocr tesseract-ocr-hin tesseract-ocr-eng poppler-utils
+sudo apt-get install poppler-utils
 ```
 
 ### 2. Setup Python Environment
@@ -21,45 +32,34 @@ sudo apt-get install tesseract-ocr tesseract-ocr-hin tesseract-ocr-eng poppler-u
 ```bash
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install pdf2image pytesseract Pillow pandas python-dateutil opencv-python numpy
+pip install -r requirements.txt
 ```
 
-### 3. Verify Installation
-
-```bash
-python verify_setup.py
-```
-
-### 4. Extract Data
+### 4. Run Processing
 
 ```bash
 # Place PDFs in input_pdfs/
 cp /path/to/pdfs/*.pdf input_pdfs/
 
-# Run extraction
-python extract_voter_data.py
+# Run
+python extract_voters.py
 
 # Check results
-ls output_csv/
+open output_images/
 ```
 
 ## Project Structure
 
 ```
 ocr-poc/
-├── config.py              # Configuration settings
-├── pdf_converter.py        # PDF → Image conversion
-├── grid_detector.py        # Grid detection & block extraction
-├── ocr_processor.py        # Image → Text (OCR)
-├── text_parser.py          # Text → Structured data
-├── data_saver.py          # Data → CSV/Excel
-├── extract_voter_data.py  # Main orchestrator
-├── verify_setup.py        # Setup verification
-├── test_single_image.py   # Test OCR on image
-├── convert_pdf_page.py    # Convert PDF page
-├── input_pdfs/            # Place PDFs here
-├── output_csv/            # Results appear here
-└── temp_images/           # Temporary files
+├── extract_voters.py       # Main processing script
+├── config.py               # Configuration settings
+├── pdf_converter.py        # PDF → Image conversion helpers
+├── grid_detector.py        # Grid detection (voter blocks)
+├── requirements.txt        # Python dependencies
+├── input_pdfs/             # Place PDFs here
+├── output_images/          # Image results
+└── temp_images/            # Temporary files (debug)
 ```
 
 ## Configuration
@@ -67,56 +67,42 @@ ocr-poc/
 Edit `config.py` to adjust settings:
 
 ```python
-IMAGE_DPI = 400              # Image quality (300-600)
-OCR_LANGUAGE = "hin+eng"      # OCR languages
-SKIP_FIRST_N_PAGES = 2       # Skip metadata pages
-SKIP_LAST_N_PAGES = 1        # Skip summary page
-USE_MULTIPROCESSING = False  # Enable for batch processing
+IMAGE_DPI = 400          # Image quality (300-600)
+INPUT_DIR = "input_pdfs"
+OUTPUT_DIR = "output_images"
 ```
 
-## Output Format
+## Processing Flow
 
-CSV columns: `serial_no`, `epic_no`, `name`, `relation_type`, `relation_name`, `house_no`, `age`, `gender`
+1. **Page 1**: Detect page contour and save cropped image as:
+   - `output_images/{pdf_name}/page_1.jpg`
+2. **Pages 3 to n-1**: Detect voter grids and save each grid as:
+   - `output_images/{pdf_name}/voters/voter_001.jpg`, `voter_002.jpg`, ...
+
+Notes:
+- There are no per-page folders for voters; images are numbered sequentially.
+- This repository currently does not perform OCR or CSV export.
+
+## Output Structure
+
+```
+output_images/
+  {pdf_name}/
+    page_1.jpg
+    voters/
+      voter_001.jpg
+      voter_002.jpg
+      voter_003.jpg
+      ...
+```
 
 ## Troubleshooting
 
-- **Tesseract not found**: Install Tesseract with Hindi language pack
-- **No text extracted**: Increase `IMAGE_DPI` in `config.py` or check PDF quality
-- **Missing dependencies**: Install all packages: `pip install pdf2image pytesseract Pillow pandas python-dateutil opencv-python numpy`
-- **Grid detection fails**: Check PDF quality, may need to adjust thresholds in `grid_detector.py`
-- **Check logs**: Review `voter_extraction.log` for details
-
-## Module Usage
-
-Use modules independently:
-
-```python
-from pdf_converter import pdf_to_images
-from grid_detector import detect_voter_blocks
-from ocr_processor import perform_ocr
-from text_parser import parse_single_block
-from data_saver import save_voters_to_csv
-
-images = pdf_to_images("input_pdfs/booth_001.pdf")
-all_voters = []
-for page_num, image in images:
-    # Detect grid and extract blocks
-    blocks = detect_voter_blocks(image)
-    # OCR and parse each block
-    for block in blocks:
-        text = perform_ocr(block)
-        voter = parse_single_block(text)
-        if voter:
-            all_voters.append(voter)
-save_voters_to_csv(all_voters, "booth_001")
-```
-
-## Performance
-
-- **Speed**: ~40-60 seconds per 15-page PDF
-- **Accuracy**: 85-95% (depends on PDF quality)
-- **Multiprocessing**: Enable in `config.py` for multiple PDFs
+- **PDF conversion fails**: Ensure Poppler is installed (`pdftoppm` available)
+- **No grids detected**: Adjust thresholds in `grid_detector.py`
+- **OpenCV issues**: Ensure `opencv-python-headless` is installed, or use `opencv-python` if you need GUI windows
+- **Check logs**: See `pdf_processing.log`
 
 ## License
 
-Open source - provided as-is for data extraction purposes.
+Open source - provided as-is for image processing purposes.
