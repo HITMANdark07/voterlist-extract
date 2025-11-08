@@ -13,9 +13,10 @@ import numpy as np
 from pathlib import Path
 from typing import Tuple, Optional
 from PIL import Image
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Import modules
-from config import INPUT_DIR, OUTPUT_DIR
+from config import INPUT_DIR, OUTPUT_DIR, USE_MULTIPROCESSING, MAX_WORKERS
 from pdf_converter import get_all_pages, get_single_page, get_page_range
 from grid_detector import detect_voter_blocks
 
@@ -273,6 +274,21 @@ def setup_directories():
         Path(directory).mkdir(parents=True, exist_ok=True)
 
 
+def process_pdf_wrapper(pdf_path: str) -> Tuple[str, bool]:
+    """
+    Wrapper function for process_pdf to work with multiprocessing.
+    
+    Args:
+        pdf_path: Path to the PDF file
+        
+    Returns:
+        Tuple of (pdf_name, success_status)
+    """
+    pdf_name = Path(pdf_path).stem
+    success = process_pdf(pdf_path)
+    return (pdf_name, success)
+
+
 def main():
     """Main execution function."""
     print("\n" + "="*70)
@@ -292,15 +308,49 @@ def main():
         print(f"Please place your PDF files in the '{INPUT_DIR}' folder and run again.")
         return
     
-    print(f"Found {len(pdf_files)} PDF file(s) to process\n")
+    print(f"Found {len(pdf_files)} PDF file(s) to process")
     
-    # Process PDFs sequentially
-    successful = 0
-    for pdf_path in pdf_files:
-        print(f"Processing: {pdf_path.name}")
-        if process_pdf(str(pdf_path)):
-            successful += 1
-        print()
+    # Determine processing mode
+    if USE_MULTIPROCESSING and len(pdf_files) > 1:
+        num_workers = min(MAX_WORKERS, len(pdf_files))
+        print(f"Processing {len(pdf_files)} PDFs in parallel using {num_workers} workers\n")
+        
+        # Process PDFs in parallel
+        successful = 0
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            # Submit all tasks
+            future_to_pdf = {
+                executor.submit(process_pdf_wrapper, str(pdf_path)): pdf_path 
+                for pdf_path in pdf_files
+            }
+            
+            # Process completed tasks
+            for future in as_completed(future_to_pdf):
+                pdf_path = future_to_pdf[future]
+                try:
+                    pdf_name, success = future.result()
+                    if success:
+                        successful += 1
+                        print(f"✅ Completed: {pdf_name}")
+                    else:
+                        print(f"❌ Failed: {pdf_name}")
+                except Exception as e:
+                    pdf_name = Path(pdf_path).stem
+                    logger.error(f"Exception processing {pdf_name}: {e}", exc_info=True)
+                    print(f"❌ Error processing {pdf_name}: {e}")
+    else:
+        # Process PDFs sequentially
+        if USE_MULTIPROCESSING:
+            print(f"Processing sequentially (only 1 PDF found)\n")
+        else:
+            print(f"Processing sequentially (multiprocessing disabled)\n")
+        
+        successful = 0
+        for pdf_path in pdf_files:
+            print(f"Processing: {pdf_path.name}")
+            if process_pdf(str(pdf_path)):
+                successful += 1
+            print()
     
     # Summary
     print("\n" + "="*70)

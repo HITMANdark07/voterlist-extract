@@ -16,7 +16,7 @@ TEMP_DIR = "temp_images"
 IMAGE_DPI = 400  # Higher DPI for better image quality
 
 # Processing settings
-USE_MULTIPROCESSING = False  # Set to True for parallel processing
+USE_MULTIPROCESSING = True  # Set to True for parallel processing
 MAX_WORKERS = cpu_count() - 1 or 1
 
 # Logging configuration
