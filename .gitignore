@@ -37,4 +37,6 @@ output_csv/
 output_images/
 temp_images/
 input_pdfs/
+voter split/
+ocr_results/
 
