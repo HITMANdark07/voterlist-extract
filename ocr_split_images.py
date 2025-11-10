@@ -8,7 +8,8 @@ from pathlib import Path
 import logging
 from multiprocessing import Pool, cpu_count
 from functools import partial
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Dict
+import time
 
 # Setup logging
 logging.basicConfig(
@@ -17,13 +18,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global predictors (loaded once per process)
+_foundation = None
+_detection_predictor = None
+_recognition_predictor = None
+
+# Try to import nvidia-ml-py for GPU monitoring (replaces deprecated pynvml)
+# nvidia-ml-py provides the pynvml module - see https://pypi.org/project/nvidia-ml-py/
+try:
+    import pynvml
+    PYNVML_AVAILABLE = True
+except ImportError:
+    PYNVML_AVAILABLE = False
+    logger.debug("nvidia-ml-py not available - GPU monitoring disabled")
+
 
 def load_predictors():
     """Load Surya OCR predictors once (reused for all images in a process)."""
-    foundation = FoundationPredictor()
-    detection_predictor = DetectionPredictor()
-    recognition_predictor = RecognitionPredictor(foundation)
-    return foundation, detection_predictor, recognition_predictor
+    global _foundation, _detection_predictor, _recognition_predictor
+    
+    if _foundation is None or _detection_predictor is None or _recognition_predictor is None:
+        logger.info("Loading Surya OCR predictors (first time)...")
+        _foundation = FoundationPredictor()
+        _detection_predictor = DetectionPredictor()
+        _recognition_predictor = RecognitionPredictor(_foundation)
+        logger.info("Predictors loaded successfully")
+    
+    return _foundation, _detection_predictor, _recognition_predictor
 
 
 def ocr_file(file_path, output_text_path, recognition_predictor, detection_predictor, output_json_path=None):
@@ -91,6 +112,122 @@ def ocr_file(file_path, output_text_path, recognition_predictor, detection_predi
         return (file_path, False, str(e))
 
 
+def get_gpu_stats() -> Optional[Dict]:
+    """
+    Get GPU statistics using NVIDIA Management Library (nvidia-ml-py).
+    See https://pypi.org/project/nvidia-ml-py/ for API documentation.
+    
+    Returns:
+        Dictionary with GPU stats or None if not available
+    """
+    if not PYNVML_AVAILABLE:
+        return None
+    
+    try:
+        # Initialize NVML
+        pynvml.nvmlInit()
+        
+        # Get device count
+        device_count = pynvml.nvmlDeviceGetCount()
+        
+        if device_count == 0:
+            pynvml.nvmlShutdown()
+            return None
+        
+        # Get stats from the first NVIDIA GPU (usually the primary one)
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        
+        # Get GPU name (returns string directly, no need to decode)
+        name = pynvml.nvmlDeviceGetName(handle)
+        
+        # Get memory info (returns struct with total, free, used attributes)
+        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        total_mem_gb = mem_info.total / (1024**3)
+        used_mem_gb = mem_info.used / (1024**3)
+        free_mem_gb = mem_info.free / (1024**3)
+        
+        # Get utilization rates (returns struct with gpu and memory attributes)
+        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        gpu_util = util.gpu
+        
+        # Get temperature (may not be available on all systems)
+        temp = None
+        try:
+            temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+        except Exception:
+            # Temperature not available or error accessing it
+            pass
+        
+        # Shutdown NVML
+        pynvml.nvmlShutdown()
+        
+        return {
+            'name': name,
+            'total_memory_gb': total_mem_gb,
+            'used_memory_gb': used_mem_gb,
+            'free_memory_gb': free_mem_gb,
+            'utilization_percent': gpu_util,
+            'temperature_c': temp
+        }
+    except Exception as e:
+        logger.debug(f"Error getting GPU stats: {e}")
+        # Try to shutdown if initialization succeeded
+        try:
+            pynvml.nvmlShutdown()
+        except:
+            pass
+        return None
+
+
+def calculate_optimal_workers(gpu_stats: Optional[Dict] = None, 
+                              estimated_memory_per_worker_gb: float = 2.0) -> int:
+    """
+    Calculate optimal number of workers based on GPU memory and CPU count.
+    
+    Args:
+        gpu_stats: GPU statistics dictionary from get_gpu_stats()
+        estimated_memory_per_worker_gb: Estimated GPU memory per worker in GB
+    
+    Returns:
+        Recommended number of workers
+    """
+    max_cpu_workers = cpu_count()
+    
+    if gpu_stats is None:
+        # No GPU info available, use conservative CPU-based estimate
+        logger.info("GPU stats not available, using CPU-based worker calculation")
+        return min(2, max_cpu_workers)
+    
+    free_mem_gb = gpu_stats['free_memory_gb']
+    gpu_util = gpu_stats['utilization_percent']
+    
+    # Calculate workers based on available GPU memory
+    # Reserve 20% of free memory as buffer
+    usable_memory_gb = free_mem_gb * 0.8
+    memory_based_workers = int(usable_memory_gb / estimated_memory_per_worker_gb)
+    
+    # Consider GPU utilization - if already high, reduce workers
+    if gpu_util > 80:
+        # GPU is heavily utilized, be conservative
+        utilization_factor = 0.5
+    elif gpu_util > 60:
+        # GPU is moderately utilized
+        utilization_factor = 0.7
+    else:
+        # GPU has capacity
+        utilization_factor = 1.0
+    
+    memory_based_workers = max(1, int(memory_based_workers * utilization_factor))
+    
+    # Take minimum of CPU-based and memory-based workers
+    optimal_workers = min(memory_based_workers, max_cpu_workers)
+    
+    # Ensure at least 1 worker
+    optimal_workers = max(1, optimal_workers)
+    
+    return optimal_workers
+
+
 def process_batch(image_batch: List[Tuple[Path, Path]]) -> Tuple[int, int]:
     """
     Process a batch of images in a single worker process.
@@ -136,6 +273,9 @@ def process_all_images(split_dir="voter split", output_dir="ocr_results", batch_
         num_workers: Number of worker processes (default: 2, reduced for memory efficiency)
                      Set to 1 for sequential processing if memory is limited
     """
+    # Record start time
+    start_time = time.time()
+    
     split_path = Path(split_dir)
     
     if not split_path.exists():
@@ -154,6 +294,36 @@ def process_all_images(split_dir="voter split", output_dir="ocr_results", batch_
     # Create output base directory
     output_base_path = Path(output_dir)
     output_base_path.mkdir(parents=True, exist_ok=True)
+    
+    # Get GPU stats and calculate optimal workers
+    gpu_stats = get_gpu_stats()
+    
+    if gpu_stats:
+        logger.info(f"\n{'='*60}")
+        logger.info("GPU RESOURCE ANALYSIS")
+        logger.info(f"{'='*60}")
+        logger.info(f"GPU: {gpu_stats['name']}")
+        logger.info(f"GPU Utilization: {gpu_stats['utilization_percent']}%")
+        logger.info(f"GPU Memory: {gpu_stats['used_memory_gb']:.1f} GB / {gpu_stats['total_memory_gb']:.1f} GB used")
+        logger.info(f"GPU Memory Free: {gpu_stats['free_memory_gb']:.1f} GB")
+        if gpu_stats['temperature_c']:
+            logger.info(f"GPU Temperature: {gpu_stats['temperature_c']}°C")
+        
+        # Calculate optimal workers based on GPU resources
+        optimal_workers = calculate_optimal_workers(gpu_stats)
+        logger.info(f"\nRecommended workers based on GPU: {optimal_workers}")
+        
+        if num_workers == 2:  # Default value
+            logger.info(f"Using recommended worker count: {optimal_workers}")
+            num_workers = optimal_workers
+        else:
+            logger.info(f"Using user-specified worker count: {num_workers}")
+            if num_workers > optimal_workers:
+                logger.warning(f"Warning: Specified workers ({num_workers}) exceeds recommended ({optimal_workers})")
+                logger.warning(f"This may cause GPU memory issues. Consider using {optimal_workers} workers.")
+        logger.info(f"{'='*60}\n")
+    else:
+        logger.info("GPU monitoring not available - using CPU-based limits")
     
     # Limit number of workers to avoid memory issues
     # Each worker loads full Surya OCR models which are memory-intensive
@@ -232,12 +402,32 @@ def process_all_images(split_dir="voter split", output_dir="ocr_results", batch_
                 total_processed += total_count
                 total_successful += success_count
     
+    # Calculate elapsed time
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    
+    # Format time in a human-readable way
+    hours = int(elapsed_time // 3600)
+    minutes = int((elapsed_time % 3600) // 60)
+    seconds = elapsed_time % 60
+    
+    if hours > 0:
+        time_str = f"{hours}h {minutes}m {seconds:.2f}s"
+    elif minutes > 0:
+        time_str = f"{minutes}m {seconds:.2f}s"
+    else:
+        time_str = f"{seconds:.2f}s"
+    
     logger.info(f"\n{'='*60}")
     logger.info(f"OCR PROCESSING COMPLETE")
     logger.info(f"{'='*60}")
     logger.info(f"Total images processed: {total_processed}")
     logger.info(f"Successful: {total_successful}")
     logger.info(f"Failed: {total_processed - total_successful}")
+    logger.info(f"Total time taken: {time_str} ({elapsed_time:.2f} seconds)")
+    if total_processed > 0:
+        avg_time_per_image = elapsed_time / total_processed
+        logger.info(f"Average time per image: {avg_time_per_image:.2f} seconds")
     logger.info(f"Output location: {output_base_path}/")
     logger.info(f"{'='*60}\n")
 
@@ -255,11 +445,31 @@ if __name__ == "__main__":
     if num_workers == 0:
         num_workers = 1
     
+    # Get GPU stats for display
+    gpu_stats = get_gpu_stats()
+    
     print("\n" + "="*70)
     print("OCR Processing for Split Voter Images")
     print("Using Surya OCR with Multiprocessing and Batch Processing")
     print("="*70)
-    print(f"Configuration: batch_size={batch_size}, num_workers={num_workers}")
+    
+    if gpu_stats:
+        print(f"\nGPU: {gpu_stats['name']}")
+        print(f"GPU Utilization: {gpu_stats['utilization_percent']}%")
+        print(f"GPU Memory: {gpu_stats['used_memory_gb']:.1f} GB / {gpu_stats['total_memory_gb']:.1f} GB used")
+        print(f"GPU Memory Free: {gpu_stats['free_memory_gb']:.1f} GB")
+        if gpu_stats['temperature_c']:
+            print(f"GPU Temperature: {gpu_stats['temperature_c']}°C")
+        
+        optimal_workers = calculate_optimal_workers(gpu_stats)
+        print(f"\nRecommended workers: {optimal_workers}")
+        if num_workers == 2:  # Default
+            print(f"Using recommended worker count: {optimal_workers}")
+            num_workers = optimal_workers
+    else:
+        print("\nGPU monitoring not available")
+    
+    print(f"\nConfiguration: batch_size={batch_size}, num_workers={num_workers}")
     if num_workers == 1:
         print("Mode: Sequential processing (memory-efficient)")
     else:
