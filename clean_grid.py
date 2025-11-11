@@ -16,7 +16,6 @@ from PIL import Image
 from pathlib import Path
 import cv2
 from typing import List, Tuple, Optional
-import os
 
 from config import OUTPUT_DIR
 

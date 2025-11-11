@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import logging
 from multiprocessing import Pool, cpu_count
-from functools import partial
 from typing import List, Tuple, Optional, Dict
 import time
 

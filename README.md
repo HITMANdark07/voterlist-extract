@@ -4,15 +4,17 @@ Process scanned Indian election PDF files with image extraction and OCR. The pip
 - Crops page 1 by detected page contour
 - Detects voter grids on pages 3 to n-1
 - Saves each detected voter block as an image
-- Runs OCR on all extracted images using PaddleOCRVL
+- Cleans voter images by removing borders and boxes
+- Runs OCR on cleaned images using Surya OCR
 
 ## Features
 
 - **Page 1 Cropping**: Detects main page contour and saves cropped page
 - **Grid Detection**: Automatically detects voter grids in relevant pages
 - **Image Extraction**: Saves extracted images in organized directory structure
-- **OCR Processing**: Runs PaddleOCRVL on all extracted images
-- **Structured Output**: Saves OCR results as JSON and Markdown files
+- **Image Cleaning**: Removes outer borders and inner boxes from voter images
+- **OCR Processing**: Runs Surya OCR on cleaned images with multiprocessing support
+- **Structured Output**: Saves OCR results as text files
 
 ## Quick Start
 
@@ -41,17 +43,11 @@ sudo apt-get install poppler-utils
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install PaddlePaddle GPU (required for PaddleOCR)
-python -m pip install paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
-
-# Install PaddleOCR with doc-parser support
-python -m pip install -U "paddleocr[doc-parser]"
-
-# Install safetensors (Windows-specific wheel)
-python -m pip install https://xly-devops.cdn.bcebos.com/safetensors-nightly/safetensors-0.6.2.dev0-cp38-abi3-win_amd64.whl
-
-# Install other dependencies
+# Install dependencies
 pip install -r requirements.txt
+
+# Install Surya OCR (if not already in requirements.txt)
+pip install surya-ocr
 ```
 
 ### 3. Extract Images from PDFs
@@ -67,14 +63,22 @@ python extract_voters.py
 open output_images/
 ```
 
-### 4. Run OCR Processing
+### 4. Clean Voter Images
 
 ```bash
-# Process all extracted images with OCR
-python ocr_processor.py
+# Remove borders and boxes from extracted voter images
+python clean_grid.py
 
-# OCR results will be saved alongside images
-# Each image will have corresponding .json and .md files
+# Cleaned images will be saved to "voter split" directory
+```
+
+### 5. Run OCR Processing
+
+```bash
+# Process all cleaned images with OCR
+python ocr_split_images.py
+
+# OCR results will be saved as .txt files in ocr_results directory
 ```
 
 ## Project Structure
@@ -82,14 +86,16 @@ python ocr_processor.py
 ```
 voterlist-extract/
 ├── extract_voters.py       # Image extraction from PDFs
-├── ocr_processor.py       # OCR processing on extracted images
+├── clean_grid.py           # Clean voter images (remove borders/boxes)
+├── ocr_split_images.py     # OCR processing on cleaned images
 ├── config.py               # Configuration settings
 ├── pdf_converter.py        # PDF → Image conversion helpers
 ├── grid_detector.py        # Grid detection (voter blocks)
 ├── requirements.txt        # Python dependencies
 ├── input_pdfs/             # Place PDFs here
-├── output_images/          # Image and OCR results
-└── temp_images/            # Temporary files (debug)
+├── output_images/          # Extracted images
+├── voter split/            # Cleaned voter images
+└── ocr_results/            # OCR text results
 ```
 
 ## Configuration
@@ -111,11 +117,18 @@ OUTPUT_DIR = "output_images"
 2. **Pages 3 to n-1**: Detect voter grids and save each grid as:
    - `output_images/{pdf_name}/voters/voter_001.jpg`, `voter_002.jpg`, ...
 
-### Step 2: OCR Processing (`ocr_processor.py`)
+### Step 2: Image Cleaning (`clean_grid.py`)
 
-1. Scans all images in `output_images/` directory
-2. Processes each image with PaddleOCRVL
-3. Saves OCR results (JSON and Markdown) alongside each image
+1. Processes all voter images from `output_images/{pdf_name}/voters/`
+2. Removes outer border rectangles
+3. Removes inner boxes and form elements
+4. Saves cleaned images to `voter split/{pdf_name}/`
+
+### Step 3: OCR Processing (`ocr_split_images.py`)
+
+1. Scans all cleaned images in `voter split/` directory
+2. Processes each image with Surya OCR (multiprocessing supported)
+3. Saves OCR results as text files in `ocr_results/{pdf_name}/`
 
 ## Output Structure
 
@@ -123,16 +136,22 @@ OUTPUT_DIR = "output_images"
 output_images/
   {pdf_name}/
     page_1.jpg
-    page_1.json          # OCR result (JSON)
-    page_1.md            # OCR result (Markdown)
     voters/
       voter_001.jpg
-      voter_001.json     # OCR result (JSON)
-      voter_001.md       # OCR result (Markdown)
       voter_002.jpg
-      voter_002.json
-      voter_002.md
       ...
+
+voter split/
+  {pdf_name}/
+    voter_001.jpg        # Cleaned image
+    voter_002.jpg
+    ...
+
+ocr_results/
+  {pdf_name}/
+    voter_001.txt        # OCR text result
+    voter_002.txt
+    ...
 ```
 
 ## Troubleshooting
@@ -140,9 +159,9 @@ output_images/
 - **PDF conversion fails**: Ensure Poppler is installed (`pdftoppm` available). The `pdf2image` library requires poppler to convert PDFs to images.
 - **No grids detected**: Adjust thresholds in `grid_detector.py`
 - **OpenCV issues**: Ensure `opencv-python-headless` is installed, or use `opencv-python` if you need GUI windows
-- **PaddleOCR/PaddlePaddle issues**: Ensure CUDA is properly installed for GPU support
-- **OCR processing fails**: Make sure PaddleOCRVL is properly installed and GPU drivers are configured
-- **Check logs**: See `pdf_processing.log` for extraction and `ocr_processing.log` for OCR processing
+- **OCR processing fails**: Make sure Surya OCR is properly installed. For GPU support, ensure CUDA is properly configured.
+- **Memory issues during OCR**: Use `num_workers=1` for sequential processing to reduce memory usage.
+- **Check logs**: See `pdf_processing.log` for extraction, `ocr_split_processing.log` for OCR processing, and `contour_boxes_extraction.log` for image cleaning
 
 ## License
 
